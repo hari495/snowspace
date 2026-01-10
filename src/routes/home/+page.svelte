@@ -15,6 +15,8 @@
 	let verifyingTask = $state(null);
 	let taskSuccess = $state(false);
 	let selectedStreetId = $state(null);
+	let showCashOutModal = $state(false);
+	let cashOutSuccess = $state(false);
 
 	const filterOptions = [
 		{ value: 'alpha-asc', label: 'A-Z' },
@@ -39,6 +41,25 @@
 		if (!e.target.closest('.filter-container')) {
 			isFilterOpen = false;
 		}
+	}
+
+	function handleCashOut() {
+		if (totalEarnings === 0) return;
+		showCashOutModal = true;
+	}
+
+	function confirmCashOut() {
+		showCashOutModal = false;
+		cashOutSuccess = true;
+		totalEarnings = 0;
+
+		setTimeout(() => {
+			cashOutSuccess = false;
+		}, 3000);
+	}
+
+	function cancelCashOut() {
+		showCashOutModal = false;
 	}
 
 	// Calculate realistic dynamic price based on multiple factors
@@ -191,7 +212,7 @@
 	let isDataLoading = $state(true);
 
 	onMount(() => {
-		loadCSVData();
+		generateSyntheticData();
 		initMap();
 	});
 
@@ -255,93 +276,66 @@
 		}
 	});
 
-	async function loadCSVData() {
-		try {
-			const response = await fetch('/data/ndsi_data.csv');
-			const csvText = await response.text();
+	function generateSyntheticData() {
+		// Street name components for variety
+		const streetPrefixes = ['Main', 'Maple', 'Oak', 'Pine', 'Cedar', 'Elm', 'Queen', 'King', 'Victoria', 'Wellington', 'Church', 'Mill', 'Bridge', 'Park', 'Hill', 'Lake', 'River', 'Forest', 'Meadow', 'Spring', 'Willow', 'Birch', 'Ash', 'Chestnut', 'Walnut'];
+		const streetTypes = ['Street', 'Avenue', 'Road', 'Drive', 'Lane', 'Court', 'Crescent', 'Boulevard', 'Way', 'Place'];
 
-			// Parse CSV (simple parsing - skip header, split by lines and commas)
-			const lines = csvText.trim().split('\n');
-			const headers = lines[0].split(',');
+		const generatedPoints = [];
+		const numPoints = 400; // Generate many more points for natural scatter
 
-			// Parse all rows with data
-			const rows = lines.slice(1).map(line => {
-				const values = line.split(',');
-				return {
-					seg_id: values[0],
-					vertex_seq: values[1],
-					lon: parseFloat(values[2]),
-					lat: parseFloat(values[3]),
-					traffic_score: parseFloat(values[4]),
-					ndsi: parseFloat(values[5]),
-					used_image_date: values[6],
-					street_address: values[7]
-				};
+		for (let i = 0; i < numPoints; i++) {
+			// Completely random radius within 5km, but bias towards outer areas
+			// Use square root to get more even area distribution
+			const randomRadius = Math.sqrt(Math.random()) * 5;
+
+			// Completely random angle
+			const randomAngle = Math.random() * 2 * Math.PI;
+
+			// Convert polar to lat/lng
+			const lat = USER_LOCATION.lat + (randomRadius * Math.cos(randomAngle)) / 111.32;
+			const lng = USER_LOCATION.lng + (randomRadius * Math.sin(randomAngle)) / (111.32 * Math.cos(USER_LOCATION.lat * Math.PI / 180));
+
+			// Generate random street name
+			const prefix = streetPrefixes[Math.floor(Math.random() * streetPrefixes.length)];
+			const type = streetTypes[Math.floor(Math.random() * streetTypes.length)];
+			const number = Math.floor(Math.random() * 900) + 100;
+			const streetName = `${number} ${prefix} ${type}`;
+
+			// Generate random priority score (1-10)
+			const priorityScore = parseFloat((Math.random() * 9 + 1).toFixed(1));
+
+			// Create point data
+			generatedPoints.push({
+				id: `point-${i}`,
+				coordinates: { lat, lng },
+				streetName,
+				priorityScore,
+				createdAt: now,
+				completed: false,
+				rawScore: priorityScore * 10
 			});
-
-			// Filter: only rows with street addresses and valid ndsi values
-			const validRows = rows.filter(row =>
-				row.street_address &&
-				row.street_address.trim() !== '' &&
-				!isNaN(row.ndsi) &&
-				!isNaN(row.traffic_score)
-			);
-
-			console.log(`Loaded ${validRows.length} valid locations from CSV`);
-
-			// Calculate raw priority scores (traffic_score * ndsi)
-			const rawScores = validRows.map(row => row.traffic_score * row.ndsi);
-
-			// Calculate mean and standard deviation for normalization
-			const mean = rawScores.reduce((a, b) => a + b, 0) / rawScores.length;
-			const variance = rawScores.reduce((sum, score) => sum + Math.pow(score - mean, 2), 0) / rawScores.length;
-			const stdDev = Math.sqrt(variance);
-
-			// Normalize to 1-10 scale using z-score normalization
-			// Then map to 1-10 range (clamping outliers)
-			const processedData = validRows.map((row, index) => {
-				const rawScore = rawScores[index];
-				const zScore = (rawScore - mean) / stdDev;
-
-				// Map z-score to 1-10 range
-				// Most z-scores fall between -3 and +3, map this to 1-10
-				const normalizedScore = Math.max(1, Math.min(10, 5.5 + (zScore * 1.5)));
-
-				return {
-					id: `${row.seg_id}-${row.vertex_seq}`,
-					coordinates: { lat: row.lat, lng: row.lon },
-					streetName: row.street_address,
-					priorityScore: parseFloat(normalizedScore.toFixed(1)),
-					createdAt: now,
-					completed: false,
-					rawScore: rawScore
-				};
-			});
-
-			// Group by street address and take the entry with highest priority per street
-			const streetMap = new Map();
-			processedData.forEach(location => {
-				const existing = streetMap.get(location.streetName);
-				if (!existing || location.priorityScore > existing.priorityScore) {
-					streetMap.set(location.streetName, location);
-				}
-			});
-
-			// Convert to array and assign sequential IDs
-			streetsData = Array.from(streetMap.values()).map((street, idx) => ({
-				...street,
-				id: idx + 1
-			}));
-
-			// Store all map points for visualization
-			allMapPoints = processedData;
-
-			isDataLoading = false;
-			console.log(`Created ${streetsData.length} unique street cards and ${allMapPoints.length} total map points`);
-		} catch (error) {
-			console.error('Error loading CSV data:', error);
-			isDataLoading = false;
 		}
+
+		// Group by street name and take one per street (for street cards)
+		const streetMap = new Map();
+		generatedPoints.forEach(point => {
+			const existing = streetMap.get(point.streetName);
+			if (!existing || point.priorityScore > existing.priorityScore) {
+				streetMap.set(point.streetName, point);
+			}
+		});
+
+		streetsData = Array.from(streetMap.values()).map((street, idx) => ({
+			...street,
+			id: idx + 1
+		}));
+
+		// Store all map points for visualization
+		allMapPoints = generatedPoints;
+
+		isDataLoading = false;
+		console.log(`Generated ${streetsData.length} unique street cards and ${allMapPoints.length} total map points`);
 	}
 
 	// Calculate current prices for all streets
@@ -497,6 +491,9 @@
 		</div>
 	</div>
 	<div class="right-panel">
+		<button class="cash-out-button" onclick={handleCashOut} disabled={totalEarnings === 0}>
+			Cash Out ${totalEarnings}
+		</button>
 		<div bind:this={mapElement} class="map"></div>
 	</div>
 
@@ -515,6 +512,33 @@
 			<div class="modal-content success">
 				<div class="checkmark">✓</div>
 				<h3>Task Successfully Done!</h3>
+			</div>
+		</div>
+	{/if}
+
+	{#if showCashOutModal}
+		<div class="modal">
+			<div class="modal-content cash-out">
+				<h3>Cash Out</h3>
+				<p class="cash-out-amount">${totalEarnings}</p>
+				<div class="cash-out-info">
+					<label for="bank-account">Bank Account (optional)</label>
+					<input type="text" id="bank-account" placeholder="Enter bank account (optional for demo)" />
+				</div>
+				<div class="modal-buttons">
+					<button class="cancel-button" onclick={cancelCashOut}>Cancel</button>
+					<button class="confirm-button" onclick={confirmCashOut}>Confirm Cash Out</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	{#if cashOutSuccess}
+		<div class="modal">
+			<div class="modal-content success">
+				<div class="checkmark">✓</div>
+				<h3>Money Sent!</h3>
+				<p>Your earnings have been transferred.</p>
 			</div>
 		</div>
 	{/if}
@@ -730,5 +754,125 @@
 
 	.modal-content.success h3 {
 		color: #10b981;
+	}
+
+	.cash-out-button {
+		position: absolute;
+		top: 16px;
+		right: 16px;
+		z-index: 1000;
+		background: #10b981;
+		color: white;
+		border: none;
+		border-radius: 8px;
+		padding: 12px 24px;
+		font-family: var(--font-body);
+		font-size: 16px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s ease;
+		box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+	}
+
+	.cash-out-button:hover:not(:disabled) {
+		background: #059669;
+		transform: translateY(-2px);
+		box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+	}
+
+	.cash-out-button:active:not(:disabled) {
+		transform: translateY(0);
+	}
+
+	.cash-out-button:disabled {
+		background: #d1d5db;
+		cursor: not-allowed;
+		box-shadow: none;
+	}
+
+	.modal-content.cash-out {
+		min-width: 400px;
+	}
+
+	.modal-content.cash-out h3 {
+		margin: 0 0 16px;
+		font-size: 24px;
+		color: #333;
+	}
+
+	.cash-out-amount {
+		font-family: var(--font-title);
+		font-size: 36px;
+		color: #10b981;
+		margin: 0 0 24px;
+		font-weight: 600;
+	}
+
+	.cash-out-info {
+		margin-bottom: 24px;
+		text-align: left;
+	}
+
+	.cash-out-info label {
+		display: block;
+		margin-bottom: 8px;
+		font-size: 14px;
+		color: #374151;
+		font-weight: 500;
+	}
+
+	.cash-out-info input {
+		width: 100%;
+		padding: 12px;
+		border: 1px solid #d1d5db;
+		border-radius: 8px;
+		font-family: var(--font-body);
+		font-size: 14px;
+	}
+
+	.cash-out-info input:focus {
+		outline: none;
+		border-color: #10b981;
+		box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+	}
+
+	.modal-buttons {
+		display: flex;
+		gap: 12px;
+		justify-content: flex-end;
+	}
+
+	.cancel-button {
+		padding: 10px 20px;
+		background: transparent;
+		border: 1px solid #d1d5db;
+		border-radius: 8px;
+		font-family: var(--font-body);
+		font-size: 14px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.cancel-button:hover {
+		background: #f3f4f6;
+		border-color: #9ca3af;
+	}
+
+	.confirm-button {
+		padding: 10px 20px;
+		background: #10b981;
+		color: white;
+		border: none;
+		border-radius: 8px;
+		font-family: var(--font-body);
+		font-size: 14px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.confirm-button:hover {
+		background: #059669;
 	}
 </style>

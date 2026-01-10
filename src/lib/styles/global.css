@@ -69,7 +69,7 @@ body {
 #app {
 	position: relative;
 	min-height: 100vh;
-	background: linear-gradient(to bottom, #ffffff 0%, #ffffff 50%, #4DB6ED 100%);
+	background: linear-gradient(to bottom, #ffffff 0%, #ffffff 30%, #4DB6ED 100%);
 	padding-top: var(--safe-area-inset-top);
 	padding-right: var(--safe-area-inset-right);
 	padding-bottom: var(--safe-area-inset-bottom);

@@ -1,8 +1,7 @@
 <div class="container">
-	<!-- Snowflakes -->
 	<div class="snowflakes" aria-hidden="true">
-		{#each Array(20) as _, i}
-			<div class="snowflake" style="left: {Math.random() * 100}%; animation-delay: {Math.random() * 10}s; animation-duration: {8 + Math.random() * 8}s;">
+		{#each Array(60) as _, i}
+			<div class="snowflake" style="left: {Math.random() * 100}%; animation-delay: {Math.random() * 15}s; animation-duration: {6 + Math.random() * 10}s; font-size: {1 + Math.random() * 1.5}em;">
 				❄
 			</div>
 		{/each}
@@ -10,9 +9,41 @@
 
 	<div class="auth-section">
 		<h1 class="title">SnowSpace</h1>
-		<p class="tagline">Tagline goes here</p>
+		<p class="tagline">Clear the snow, watch your earnings grow</p>
 
 		<img src="/icons/snowspace-logo-lm.svg" alt="SnowSpace Logo" class="logo" />
+
+		<div class="features">
+			<div class="feature">
+				<div class="feature-icon">
+					<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<line x1="12" y1="1" x2="12" y2="23"></line>
+						<path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+					</svg>
+				</div>
+				<h3>Earn More</h3>
+				<p>Get paid for every street you clear</p>
+			</div>
+			<div class="feature">
+				<div class="feature-icon">
+					<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+						<circle cx="12" cy="10" r="3"></circle>
+					</svg>
+				</div>
+				<h3>Work Local</h3>
+				<p>Find jobs near you instantly</p>
+			</div>
+			<div class="feature">
+				<div class="feature-icon">
+					<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+					</svg>
+				</div>
+				<h3>Flexible Hours</h3>
+				<p>Choose when and where you work</p>
+			</div>
+		</div>
 
 		<div class="divider">
 			<span class="line"></span>
@@ -32,13 +63,15 @@
 			</button>
 		</div>
 
-		<a href="/home" class="skip-button">Skip</a>
+		<a href="/verify" class="skip-button">Skip</a>
 	</div>
 </div>
 
 <style>
 	.container {
 		position: relative;
+		min-height: 100vh;
+		background: linear-gradient(to bottom, #ffffff 0%, #ffffff 30%, #4DB6ED 100%);
 	}
 
 	.snowflakes {
@@ -56,20 +89,28 @@
 		position: absolute;
 		top: -10%;
 		color: #fff;
-		font-size: 1.5em;
-		opacity: 0.8;
+		opacity: 0.9;
 		animation: fall linear infinite;
-		text-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
+		text-shadow: 0 0 10px rgba(255, 255, 255, 0.8), 0 0 20px rgba(77, 182, 237, 0.4);
+		filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.5));
 	}
 
 	@keyframes fall {
 		0% {
 			top: -10%;
 			transform: translateX(0px) rotate(0deg);
+			opacity: 0;
+		}
+		10% {
+			opacity: 0.9;
+		}
+		90% {
+			opacity: 0.9;
 		}
 		100% {
 			top: 110%;
-			transform: translateX(30px) rotate(360deg);
+			transform: translateX(50px) rotate(360deg);
+			opacity: 0;
 		}
 	}
 
@@ -105,9 +146,45 @@
 	}
 
 	.logo {
-		width: 240px;
-		height: 240px;
+		width: 200px;
+		height: 200px;
 		margin: 0;
+	}
+
+	.features {
+		display: flex;
+		gap: 32px;
+		margin: 32px 0;
+		max-width: 700px;
+	}
+
+	.feature {
+		flex: 1;
+		text-align: center;
+	}
+
+	.feature-icon {
+		margin-bottom: 12px;
+		color: #4DB6ED;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.feature h3 {
+		font-family: var(--font-body);
+		font-size: 16px;
+		font-weight: 600;
+		margin: 0 0 4px;
+		color: #333;
+	}
+
+	.feature p {
+		font-family: var(--font-body);
+		font-size: 13px;
+		margin: 0;
+		color: #666;
+		line-height: 1.4;
 	}
 
 	.divider {
