@@ -235,33 +235,73 @@
 	function updateMapMarkers() {
 		if (!map || !window.L) return;
 
-		markers.forEach(m => map.removeLayer(m));
-		markers = [];
-
+		// Update radius circle with animation
 		if (radiusCircle) map.removeLayer(radiusCircle);
 		radiusCircle = window.L.circle([USER_LOCATION.lat, USER_LOCATION.lng], {
 			radius: radius * 1000,
 			color: '#4DB6ED',
-			fillOpacity: 0.1
+			fillOpacity: 0.1,
+			className: 'radius-circle-animate'
 		}).addTo(map);
 
-		mapPoints().forEach(point => {
-			const color = getPriorityColor(point.priorityScore);
-			const marker = window.L.circleMarker([point.coordinates.lat, point.coordinates.lng], {
-				radius: 6,
-				fillColor: color,
-				color: '#fff',
-				weight: 1,
-				fillOpacity: 0.8
-			}).addTo(map);
+		// Get current points that should be visible
+		const visiblePoints = mapPoints();
+		const visiblePointIds = new Set(visiblePoints.map(p => p.id));
 
-			const price = calculatePrice(point.priorityScore, point.createdAt, point.coordinates, Math.min(point.rawScore / 100, 1), 0.5);
-			marker.bindPopup(`<strong>${point.streetName}</strong><br>Payout: $${price}<br>Priority: ${point.priorityScore}`);
-			marker.on('click', () => {
-				const street = streetsData.find(s => s.streetName === point.streetName);
-				if (street) selectedStreetId = street.id;
-			});
-			markers.push(marker);
+		// Fade out and remove markers that are no longer visible
+		markers = markers.filter(markerData => {
+			if (!visiblePointIds.has(markerData.pointId)) {
+				// Fade out animation
+				const element = markerData.marker.getElement();
+				if (element) {
+					element.style.transition = 'opacity 0.15s ease-out';
+					element.style.opacity = '0';
+					setTimeout(() => {
+						map.removeLayer(markerData.marker);
+					}, 150);
+				} else {
+					map.removeLayer(markerData.marker);
+				}
+				return false;
+			}
+			return true;
+		});
+
+		// Get existing marker IDs
+		const existingIds = new Set(markers.map(m => m.pointId));
+
+		// Add new markers with fade in animation
+		visiblePoints.forEach(point => {
+			if (!existingIds.has(point.id)) {
+				const color = getPriorityColor(point.priorityScore);
+				const marker = window.L.circleMarker([point.coordinates.lat, point.coordinates.lng], {
+					radius: 6,
+					fillColor: color,
+					color: '#fff',
+					weight: 1,
+					fillOpacity: 0,
+					className: 'map-marker-animate'
+				}).addTo(map);
+
+				// Fade in animation
+				setTimeout(() => {
+					const element = marker.getElement();
+					if (element) {
+						element.style.transition = 'opacity 0.15s ease-in';
+						element.style.opacity = '1';
+					}
+					marker.setStyle({ fillOpacity: 0.8 });
+				}, 10);
+
+				const price = calculatePrice(point.priorityScore, point.createdAt, point.coordinates, Math.min(point.rawScore / 100, 1), 0.5);
+				marker.bindPopup(`<strong>${point.streetName}</strong><br>Payout: $${price}<br>Priority: ${point.priorityScore}`);
+				marker.on('click', () => {
+					const street = streetsData.find(s => s.streetName === point.streetName);
+					if (street) selectedStreetId = street.id;
+				});
+
+				markers.push({ marker, pointId: point.id });
+			}
 		});
 	}
 
@@ -874,5 +914,18 @@
 
 	.confirm-button:hover {
 		background: #059669;
+	}
+
+	/* Smooth transitions for map elements */
+	:global(.radius-circle-animate) {
+		transition: all 0.15s ease-in-out !important;
+	}
+
+	:global(.map-marker-animate) {
+		transition: opacity 0.15s ease-in-out, transform 0.15s ease-out !important;
+	}
+
+	:global(.leaflet-interactive) {
+		transition: opacity 0.15s ease-in-out !important;
 	}
 </style>
