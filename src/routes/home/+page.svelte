@@ -1,20 +1,20 @@
 <script>
-	import Drawer from '$lib/components/Drawer.svelte';
 	import StreetCard from '$lib/components/StreetCard.svelte';
+	import { onMount } from 'svelte';
 
-	let radius = $state(10); // Default radius in km
-	let filterMode = $state('priority-high'); // Default filter
+	let radius = $state(5);
+	let filterMode = $state('priority-high');
 	let isFilterOpen = $state(false);
 	let totalEarnings = $state(0);
 
-	// Brampton City Hall coordinates (user location)
 	const USER_LOCATION = { lat: 43.6850, lng: -79.7596 };
 
-	// Map state
-	let isDrawerPeekMode = $state(false);
-
-	// Calculate radius in pixels for SVG (approximate conversion for visualization)
-	let radiusPx = $derived(radius * 8); // Rough approximation: 1km = ~8px at this zoom level
+	let mapElement;
+	let map;
+	let markers = [];
+	let verifyingTask = $state(null);
+	let taskSuccess = $state(false);
+	let selectedStreetId = $state(null);
 
 	const filterOptions = [
 		{ value: 'alpha-asc', label: 'A-Z' },
@@ -82,9 +82,37 @@
 		return `rgb(${r}, ${g}, ${b})`;
 	}
 
-	function handleCardComplete(price, isCompleted) {
+	async function handleCardComplete(price, isCompleted, streetData) {
 		if (isCompleted) {
+			verifyingTask = { streetName: streetData.streetName };
+
+			await new Promise(resolve => setTimeout(resolve, 5000));
+
+			verifyingTask = null;
+			taskSuccess = true;
+
+			if (typeof window !== 'undefined' && window.confetti) {
+				window.confetti({
+					particleCount: 100,
+					spread: 70,
+					origin: { y: 0.6 }
+				});
+			}
+
 			totalEarnings += price;
+			streetData.priorityScore = 0;
+			streetData.completed = true;
+
+			// Update all map points for this street
+			allMapPoints.forEach(point => {
+				if (point.streetName === streetData.streetName) {
+					point.priorityScore = 0;
+				}
+			});
+
+			setTimeout(() => {
+				taskSuccess = false;
+			}, 2000);
 		} else {
 			totalEarnings -= price;
 		}
@@ -130,10 +158,67 @@
 	let hoveredPoint = $state(null);
 	let isDataLoading = $state(true);
 
-	// Load CSV data on mount
+	onMount(() => {
+		loadCSVData();
+		initMap();
+	});
+
+	function initMap() {
+		if (typeof window === 'undefined' || !window.L) return;
+
+		map = window.L.map(mapElement, {
+			center: [USER_LOCATION.lat, USER_LOCATION.lng],
+			zoom: 12,
+			zoomControl: true
+		});
+
+		window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+			attribution: '© OpenStreetMap'
+		}).addTo(map);
+	}
+
+	let radiusCircle;
+
+	function updateMapMarkers() {
+		if (!map || !window.L) return;
+
+		markers.forEach(m => map.removeLayer(m));
+		markers = [];
+
+		if (radiusCircle) map.removeLayer(radiusCircle);
+		radiusCircle = window.L.circle([USER_LOCATION.lat, USER_LOCATION.lng], {
+			radius: radius * 1000,
+			color: '#4DB6ED',
+			fillOpacity: 0.1
+		}).addTo(map);
+
+		mapPoints().forEach(point => {
+			const color = getPriorityColor(point.priorityScore);
+			const marker = window.L.circleMarker([point.coordinates.lat, point.coordinates.lng], {
+				radius: 6,
+				fillColor: color,
+				color: '#fff',
+				weight: 1,
+				fillOpacity: 0.8
+			}).addTo(map);
+
+			marker.bindPopup(`<strong>${point.streetName}</strong><br>Payout: $${calculatePrice(point.priorityScore, point.createdAt)}<br>Priority: ${point.priorityScore}`);
+			marker.on('click', () => {
+				const street = streetsData.find(s => s.streetName === point.streetName);
+				if (street) selectedStreetId = street.id;
+			});
+			markers.push(marker);
+		});
+	}
+
 	$effect(() => {
-		if (typeof window !== 'undefined') {
-			loadCSVData();
+		radius;
+		updateMapMarkers();
+	});
+
+	$effect(() => {
+		if (selectedStreetId) {
+			document.getElementById(`street-${selectedStreetId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 		}
 	});
 
@@ -238,7 +323,7 @@
 
 	// Filtered and sorted streets based on selected filter and radius
 	let streets = $derived(() => {
-		// First filter by radius distance from user location
+		// First filter by radius distance from user location and exclude completed
 		const withinRadius = streetsWithPrices().filter(street => {
 			const distance = calculateDistance(
 				USER_LOCATION.lat,
@@ -246,7 +331,7 @@
 				street.coordinates.lat,
 				street.coordinates.lng
 			);
-			return distance <= radius;
+			return distance <= radius && !street.completed;
 		});
 
 		// Then sort based on selected filter
@@ -279,7 +364,7 @@
 				point.coordinates.lat,
 				point.coordinates.lng
 			);
-			return distance <= radius;
+			return distance <= radius && point.priorityScore > 0;
 		});
 	});
 
@@ -321,169 +406,34 @@
 </script>
 
 <div class="page-wrapper">
-	<!-- Simple SVG Map -->
-	<div class="map-container" class:map-interactive={isDrawerPeekMode}>
-		<!-- Pure SVG map - white background with location and radius -->
-		<svg class="map-svg" viewBox="0 0 430 932" preserveAspectRatio="xMidYMid slice">
-			<!-- White background -->
-			<rect width="430" height="932" fill="#ffffff" />
-
-			<!-- Radius circle -->
-			<circle
-				cx="215"
-				cy="466"
-				r={radiusPx}
-				fill="#4DB6ED"
-				fill-opacity="0.1"
-				stroke="#4DB6ED"
-				stroke-width="2"
-			/>
-
-			<!-- Data points from CSV (filtered by radius for performance) -->
-			{#each mapPoints() as point (point.id)}
-				{@const svgCoords = latLngToSVG(point.coordinates.lat, point.coordinates.lng)}
-				{@const price = calculatePrice(point.priorityScore, point.createdAt)}
-				<circle
-					cx={svgCoords.x}
-					cy={svgCoords.y}
-					r="4"
-					fill={getPriorityColor(point.priorityScore)}
-					stroke="#ffffff"
-					stroke-width="1"
-					class="map-point"
-					onmouseenter={() => hoveredPoint = { ...point, price, x: svgCoords.x, y: svgCoords.y }}
-					onmouseleave={() => hoveredPoint = null}
-					role="button"
-					tabindex="0"
-				/>
-			{/each}
-
-			<!-- User location marker (on top) -->
-			<circle
-				cx="215"
-				cy="466"
-				r="8"
-				fill="#4DB6ED"
-				stroke="#ffffff"
-				stroke-width="2"
-			/>
-
-			<!-- Hover tooltip -->
-			{#if hoveredPoint}
-				<g class="tooltip">
-					<!-- Tooltip background -->
-					<rect
-						x={hoveredPoint.x + 10}
-						y={hoveredPoint.y - 60}
-						width="140"
-						height="54"
-						rx="8"
-						fill="#ffffff"
-						stroke="#e5e5e5"
-						stroke-width="1"
-						filter="drop-shadow(0 2px 8px rgba(0,0,0,0.15))"
-					/>
-					<!-- Tooltip text -->
-					<text
-						x={hoveredPoint.x + 16}
-						y={hoveredPoint.y - 42}
-						font-family="var(--font-body)"
-						font-size="11"
-						font-weight="600"
-						fill="#000"
-					>
-						{hoveredPoint.streetName.length > 18 ? hoveredPoint.streetName.slice(0, 18) + '...' : hoveredPoint.streetName}
-					</text>
-					<text
-						x={hoveredPoint.x + 16}
-						y={hoveredPoint.y - 28}
-						font-family="var(--font-body)"
-						font-size="10"
-						fill="#666"
-					>
-						Payout: ${hoveredPoint.price}
-					</text>
-					<text
-						x={hoveredPoint.x + 16}
-						y={hoveredPoint.y - 14}
-						font-family="var(--font-body)"
-						font-size="10"
-						fill={getPriorityColor(hoveredPoint.priorityScore)}
-					>
-						Priority: {hoveredPoint.priorityScore}
-					</text>
-				</g>
-			{/if}
-		</svg>
-	</div>
-
-	<!-- Radius Slider -->
-	<div class="radius-slider-container">
-		<div class="radius-display">Radius</div>
-		<div class="slider-wrapper">
-			<span class="label-min">10km</span>
-			<input
-				type="range"
-				min="10"
-				max="250"
-				bind:value={radius}
-				class="radius-slider"
-				aria-label="Map radius in kilometers"
-			/>
-			<span class="label-max">250km</span>
+	<div class="left-panel">
+		<div class="stats-header">
+			<h2>Earned <span style="color: {getEarningsColor(totalEarnings)};">${totalEarnings}</span></h2>
+			<div class="filter-container">
+				<button class="filter-icon-button" onclick={toggleFilter}>
+					<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+						<path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zM3.5 5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1 0-1zM5 8.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm2 3a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5z"/>
+					</svg>
+				</button>
+				{#if isFilterOpen}
+					<div class="filter-dropdown-menu">
+						{#each filterOptions as option}
+							<button class="filter-option" class:active={filterMode === option.value} onclick={() => selectFilter(option.value)}>
+								{option.label}
+							</button>
+						{/each}
+					</div>
+				{/if}
+			</div>
 		</div>
-	</div>
-
-	<Drawer bind:isPeekMode={isDrawerPeekMode}>
-		{#snippet peekContent()}
-			<div class="peek-stats">
-				<div class="stat-item">
-					<span class="stat-value" style="color: {getEarningsColor(stats().earnings)};">${stats().earnings}</span>
-					<span class="stat-label">Earned</span>
-				</div>
-				<div class="stat-item">
-					<span class="stat-value">{stats().jobCount}</span>
-					<span class="stat-label">Jobs</span>
-				</div>
-				<div class="stat-item">
-					<span class="stat-value" style="color: {getPayoutColor(stats().avgPayout)};">${stats().avgPayout}</span>
-					<span class="stat-label">Avg Pay</span>
-				</div>
-				<div class="stat-item">
-					<span class="stat-value" style="color: {getPriorityColor(stats().avgPriority)}; font-weight: 600;">{stats().avgPriority}</span>
-					<span class="stat-label">Avg Priority</span>
-				</div>
-			</div>
-		{/snippet}
-
-		<div class="drawer-inner">
-			<div class="drawer-header">
-				<h2>You've Earned <span style="color: {getEarningsColor(totalEarnings)};">${totalEarnings}</span> Today.</h2>
-				<div class="filter-container">
-					<button class="filter-icon-button" onclick={toggleFilter} aria-label="Filter options">
-						<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 16 16" fill="currentColor" class="filter-icon">
-							<path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zM3.5 5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1 0-1zM5 8.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm2 3a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5z"/>
-						</svg>
-					</button>
-					{#if isFilterOpen}
-						<div class="filter-dropdown-menu">
-							{#each filterOptions as option}
-								<button
-									class="filter-option"
-									class:active={filterMode === option.value}
-									onclick={() => selectFilter(option.value)}
-								>
-									{option.label}
-								</button>
-							{/each}
-						</div>
-					{/if}
-				</div>
-			</div>
-			<p>{countdown} seconds to payout boosts!</p>
-
-			<div class="street-list">
-				{#each streets() as street}
+		<div class="radius-control">
+			<label>Radius: {radius}km</label>
+			<input type="range" min="0.25" max="6" step="0.25" bind:value={radius} />
+		</div>
+		<p>{countdown}s to boost</p>
+		<div class="street-list">
+			{#each streets() as street}
+				<div id="street-{street.id}" class:highlighted={selectedStreetId === street.id}>
 					<StreetCard
 						coordinates={street.coordinates}
 						streetName={street.streetName}
@@ -492,212 +442,99 @@
 						onComplete={(price, isCompleted) => {
 							const streetData = streetsData.find(s => s.id === street.id);
 							if (streetData) {
-								streetData.completed = isCompleted;
-								handleCardComplete(price, isCompleted);
+								handleCardComplete(price, isCompleted, streetData);
 							}
 						}}
 					/>
-				{/each}
+				</div>
+			{/each}
+		</div>
+	</div>
+	<div class="right-panel">
+		<div bind:this={mapElement} class="map"></div>
+	</div>
+
+	{#if verifyingTask}
+		<div class="modal">
+			<div class="modal-content">
+				<div class="spinner"></div>
+				<h3>Verifying with satellite...</h3>
+				<p>{verifyingTask.streetName}</p>
 			</div>
 		</div>
-	</Drawer>
+	{/if}
+
+	{#if taskSuccess}
+		<div class="modal">
+			<div class="modal-content success">
+				<div class="checkmark">✓</div>
+				<h3>Task Successfully Done!</h3>
+			</div>
+		</div>
+	{/if}
 </div>
 
 <svelte:window onclick={handleClickOutside} />
 
 <style>
 	.page-wrapper {
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
+		display: flex;
+		height: 100vh;
 	}
 
-	/* Map Styles */
-	.map-container {
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		z-index: 1;
-		pointer-events: none; /* Always disabled - map is decorative */
-		overflow: hidden;
+	.left-panel {
+		width: 40%;
+		padding: 24px;
+		overflow-y: auto;
+		background: #fff;
 	}
 
-	.map-svg {
+	.left-panel::-webkit-scrollbar {
+		width: 8px;
+		display: block;
+	}
+
+	.left-panel::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.left-panel::-webkit-scrollbar-thumb {
+		background: #ccc;
+		border-radius: 4px;
+		transition: all 0.2s;
+	}
+
+	.left-panel::-webkit-scrollbar-thumb:hover {
+		background: #555;
+		width: 12px;
+		border-radius: 6px;
+	}
+
+	.right-panel {
+		width: 60%;
+		position: relative;
+	}
+
+	.map {
 		width: 100%;
 		height: 100%;
-		pointer-events: none;
 	}
 
-	/* Map point styles */
-	:global(.map-point) {
-		cursor: pointer;
-		pointer-events: auto;
-		transition: r 0.2s, opacity 0.2s;
-	}
-
-	:global(.map-point:hover) {
-		r: 6;
-		opacity: 0.9;
-	}
-
-	:global(.tooltip) {
-		pointer-events: none;
-	}
-
-	/* Radius Slider Styles */
-	.radius-slider-container {
-		position: absolute;
-		top: var(--spacing-md);
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 100;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 6px;
-		width: 240px;
-		background: rgba(255, 255, 255, 0.95);
-		padding: var(--spacing-sm);
-		border-radius: 16px;
-		box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-	}
-
-	.radius-display {
-		font-family: var(--font-title);
-		font-size: 18px;
-		font-weight: normal;
-		color: #000000;
-		letter-spacing: 0.3px;
-	}
-
-	.slider-wrapper {
-		width: 100%;
-		display: flex;
-		align-items: center;
-		gap: var(--spacing-xs);
-	}
-
-	.label-min,
-	.label-max {
-		font-family: var(--font-body);
-		font-size: 11px;
-		color: #9ca3af;
-		flex-shrink: 0;
-	}
-
-	.radius-slider {
-		flex: 1;
-		height: 3px;
-		-webkit-appearance: none;
-		appearance: none;
-		background: #d1d5db;
-		border-radius: 1.5px;
-		outline: none;
-		cursor: pointer;
-	}
-
-	.radius-slider::-webkit-slider-thumb {
-		-webkit-appearance: none;
-		appearance: none;
-		width: 14px;
-		height: 14px;
-		background: #9ca3af;
-		border: none;
-		border-radius: 50%;
-		cursor: pointer;
-		transition: all 0.2s ease;
-	}
-
-	.radius-slider::-webkit-slider-thumb:hover {
-		background: #6b7280;
-		transform: scale(1.15);
-	}
-
-	.radius-slider::-webkit-slider-thumb:active {
-		background: #4b5563;
-		transform: scale(1.1);
-	}
-
-	.radius-slider::-moz-range-thumb {
-		width: 14px;
-		height: 14px;
-		background: #9ca3af;
-		border: none;
-		border-radius: 50%;
-		cursor: pointer;
-		transition: all 0.2s ease;
-	}
-
-	.radius-slider::-moz-range-thumb:hover {
-		background: #6b7280;
-		transform: scale(1.15);
-	}
-
-	.radius-slider::-moz-range-thumb:active {
-		background: #4b5563;
-		transform: scale(1.1);
-	}
-
-	/* Peek state styles */
-	.peek-stats {
-		display: flex;
-		gap: var(--spacing-md);
-		justify-content: space-around;
-		padding: var(--spacing-xs) 0;
-	}
-
-	.stat-item {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 4px;
-	}
-
-	.stat-value {
-		font-family: var(--font-body);
-		font-size: 20px;
-		font-weight: 600;
-		color: var(--color-text);
-	}
-
-	.stat-label {
-		font-family: var(--font-body);
-		font-size: 12px;
-		color: #6b7280;
-	}
-
-	/* Expanded drawer content */
-	.drawer-inner {
-		height: 100%;
-		padding: var(--spacing-md);
-		display: flex;
-		flex-direction: column;
-		gap: var(--spacing-md);
-	}
-
-	.drawer-header {
+	.stats-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		gap: var(--spacing-sm);
+		margin-bottom: 16px;
 	}
 
-	.drawer-inner h2 {
+	.stats-header h2 {
 		font-family: var(--font-title);
 		font-size: 28px;
-		font-weight: normal;
 		margin: 0;
-		flex: 1;
-		min-width: 0;
 	}
 
 	.filter-container {
 		position: relative;
-		flex-shrink: 0;
 	}
 
 	.filter-icon-button {
@@ -705,23 +542,14 @@
 		height: 32px;
 		border: none;
 		background: transparent;
-		display: flex;
-		align-items: center;
-		justify-content: center;
 		cursor: pointer;
 		color: #6b7280;
 		border-radius: 6px;
-		transition: all 0.2s ease;
 		padding: 0;
 	}
 
 	.filter-icon-button:hover {
 		background: #f3f4f6;
-		color: #374151;
-	}
-
-	.filter-icon-button:active {
-		transform: scale(0.95);
 	}
 
 	.filter-dropdown-menu {
@@ -729,24 +557,12 @@
 		top: calc(100% + 4px);
 		right: 0;
 		background: white;
-		border: 1px solid var(--color-border);
+		border: 1px solid #e5e5e5;
 		border-radius: 10px;
-		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+		box-shadow: 0 4px 20px rgba(0,0,0,0.12);
 		padding: 6px;
 		min-width: 180px;
 		z-index: 1000;
-		animation: dropdownFadeIn 0.15s ease-out;
-	}
-
-	@keyframes dropdownFadeIn {
-		from {
-			opacity: 0;
-			transform: translateY(-8px);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0);
-		}
 	}
 
 	.filter-option {
@@ -755,13 +571,9 @@
 		border: none;
 		background: transparent;
 		text-align: left;
-		font-family: var(--font-body);
 		font-size: 14px;
-		color: #374151;
 		cursor: pointer;
 		border-radius: 6px;
-		transition: all 0.15s ease;
-		display: block;
 	}
 
 	.filter-option:hover {
@@ -770,20 +582,107 @@
 
 	.filter-option.active {
 		background: #eff6ff;
-		color: var(--color-accent);
+		color: #007aff;
 		font-weight: 500;
 	}
 
-	.drawer-inner p {
-		font-family: var(--font-body);
-		font-size: 16px;
+	.left-panel p {
 		color: #6b7280;
-		margin: 0;
+		margin: 0 0 16px;
+	}
+
+	.radius-control {
+		margin: 16px 0;
+	}
+
+	.radius-control label {
+		display: block;
+		margin-bottom: 8px;
+		font-size: 14px;
+		color: #374151;
+	}
+
+	.radius-control input {
+		width: 100%;
+		cursor: pointer;
 	}
 
 	.street-list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--spacing-sm);
+		gap: 16px;
+	}
+
+	.highlighted {
+		outline: 2px solid #4DB6ED;
+		border-radius: 12px;
+		animation: pulse 0.5s ease-in-out;
+	}
+
+	@keyframes pulse {
+		0%, 100% { transform: scale(1); }
+		50% { transform: scale(1.02); }
+	}
+
+	.modal {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.5);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 10000;
+	}
+
+	.modal-content {
+		background: white;
+		padding: 40px;
+		border-radius: 16px;
+		text-align: center;
+		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+	}
+
+	.spinner {
+		width: 48px;
+		height: 48px;
+		border: 4px solid #e5e5e5;
+		border-top: 4px solid #4DB6ED;
+		border-radius: 50%;
+		animation: spin 1s linear infinite;
+		margin: 0 auto 16px;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	.modal-content h3 {
+		margin: 0 0 8px;
+		font-size: 20px;
+	}
+
+	.modal-content p {
+		margin: 0;
+		color: #6b7280;
+	}
+
+	.checkmark {
+		width: 64px;
+		height: 64px;
+		background: #10b981;
+		color: white;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 40px;
+		margin: 0 auto 16px;
+	}
+
+	.modal-content.success h3 {
+		color: #10b981;
 	}
 </style>
