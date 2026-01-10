@@ -41,16 +41,48 @@
 		}
 	}
 
-	// Calculate dynamic price based on priority and time elapsed
-	function calculatePrice(basePriority, createdAt) {
-		const BASE_PRICE = 100;
-		const minutesElapsed = (Date.now() - createdAt) / (1000 * 60);
+	// Calculate realistic dynamic price based on multiple factors
+	function calculatePrice(basePriority, createdAt, coordinates = null, trafficScore = 0, ndsi = 0) {
+		// Base rates
+		const BASE_RATE_PER_METER = 0.15; // $0.15 per meter of street
+		const STREET_LENGTH = 200; // Average street segment ~200m
 
-		// Priority 0: 0.1% per minute, Priority 10: 1% per minute
-		const growthRatePerMinute = 0.001 + (basePriority / 10) * 0.009; // 0.1% to 1%
+		// Snow depth multiplier (NDSI: -1 to 1, where higher = more snow)
+		const snowDepthFactor = Math.max(1, 1 + (ndsi * 2)); // 1x to 3x multiplier
 
-		const currentPrice = BASE_PRICE * Math.pow(1 + growthRatePerMinute, minutesElapsed);
-		return Math.round(currentPrice);
+		// Traffic urgency multiplier (0-1 traffic score)
+		const trafficMultiplier = 1 + (trafficScore * 1.5); // 1x to 2.5x
+
+		// Priority urgency (0-10 scale)
+		const priorityMultiplier = 1 + (basePriority / 10) * 0.8; // 1x to 1.8x
+
+		// Time-based urgency (grows over time)
+		const hoursElapsed = (Date.now() - createdAt) / (1000 * 60 * 60);
+		const urgencyBonus = Math.min(hoursElapsed * 5, 50); // Max $50 bonus
+
+		// Time of day multiplier (higher pay at night/early morning)
+		const hour = new Date().getHours();
+		const timeOfDayMultiplier = (hour >= 22 || hour <= 6) ? 1.5 : 1.0;
+
+		// Distance penalty/bonus (closer = slight bonus for convenience)
+		let distanceMultiplier = 1.0;
+		if (coordinates) {
+			const distance = calculateDistance(
+				USER_LOCATION.lat,
+				USER_LOCATION.lng,
+				coordinates.lat,
+				coordinates.lng
+			);
+			distanceMultiplier = distance < 1 ? 1.2 : (distance < 3 ? 1.0 : 0.9);
+		}
+
+		// Calculate final price
+		const basePrice = BASE_RATE_PER_METER * STREET_LENGTH;
+		const multipliedPrice = basePrice * snowDepthFactor * trafficMultiplier * priorityMultiplier * timeOfDayMultiplier * distanceMultiplier;
+		const finalPrice = multipliedPrice + urgencyBonus;
+
+		// Apply realistic min/max caps
+		return Math.round(Math.max(20, Math.min(finalPrice, 500)));
 	}
 
 	// Color earnings based on amount (more green = higher)
@@ -202,7 +234,8 @@
 				fillOpacity: 0.8
 			}).addTo(map);
 
-			marker.bindPopup(`<strong>${point.streetName}</strong><br>Payout: $${calculatePrice(point.priorityScore, point.createdAt)}<br>Priority: ${point.priorityScore}`);
+			const price = calculatePrice(point.priorityScore, point.createdAt, point.coordinates, Math.min(point.rawScore / 100, 1), 0.5);
+			marker.bindPopup(`<strong>${point.streetName}</strong><br>Payout: $${price}<br>Priority: ${point.priorityScore}`);
 			marker.on('click', () => {
 				const street = streetsData.find(s => s.streetName === point.streetName);
 				if (street) selectedStreetId = street.id;
@@ -315,10 +348,23 @@
 	let streetsWithPrices = $derived(() => {
 		// Trigger recalculation when priceUpdateTrigger changes
 		priceUpdateTrigger;
-		return streetsData.map(street => ({
-			...street,
-			price: calculatePrice(street.priorityScore, street.createdAt)
-		}));
+		return streetsData.map(street => {
+			// Find the original data point to get traffic and ndsi
+			const dataPoint = allMapPoints.find(p => p.id === street.id);
+			const trafficScore = dataPoint?.rawScore ? Math.min(dataPoint.rawScore / 100, 1) : 0;
+			const ndsi = 0.5; // Default snow depth factor (could be dynamic)
+
+			return {
+				...street,
+				price: calculatePrice(
+					street.priorityScore,
+					street.createdAt,
+					street.coordinates,
+					trafficScore,
+					ndsi
+				)
+			};
+		});
 	});
 
 	// Filtered and sorted streets based on selected filter and radius
