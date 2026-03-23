@@ -1,5 +1,5 @@
 # SnowSpace-BramHacks Top 5 Winner
-./cursorful-video-17681708203681.mp4
+<video src="cursorful-video-17681708203681.mp4" width="100%" controls></video>
 A snow removal job marketplace app that helps users find and complete snow shoveling jobs in Brampton, Ontario. Jobs are prioritized based on traffic levels and snow coverage (NDSI) to optimize snow removal efforts in high-priority areas. Built in bramhacks and placed top 5 and got to present in front of everyone.
 
 ## What is SnowSpace?
